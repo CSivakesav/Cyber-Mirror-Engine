@@ -22,7 +22,10 @@ import {
   Trash2,
   RotateCcw,
   Sparkles,
+  FileSpreadsheet,
 } from 'lucide-react';
+import { ExcelUploadModal } from '../shared/ExcelUploadModal';
+import { clearCustomDevices } from '../../utils/customDeviceStore';
 
 export type NavTab =
   | 'dashboard'
@@ -56,6 +59,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [showToast, setShowToast] = useState(false);
+  const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
 
   const navItems: NavItem[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -72,6 +76,7 @@ export const AppShell: React.FC<AppShellProps> = ({
       localStorage.setItem('medshield_fresh_clean_state', 'true');
       localStorage.removeItem('medshield_cached_scan_data');
     }
+    clearCustomDevices();
     if (onResetAllData) {
       onResetAllData();
     }
@@ -104,9 +109,9 @@ export const AppShell: React.FC<AppShellProps> = ({
               </svg>
             </div>
             <div>
-              <h1 className="font-bold text-xl tracking-wide text-white">Smansys</h1>
+              <h1 className="font-bold text-xl tracking-wide text-white">MedShield AI</h1>
               <p className="text-[10px] text-gray-400 font-medium tracking-tight">
-                Cyber Mirror Admin Hub
+                Cyber Mirror Engine
               </p>
             </div>
           </div>
@@ -204,6 +209,17 @@ export const AppShell: React.FC<AppShellProps> = ({
           {/* Right: Actions, Erase Button, & User Avatar */}
           <div className="flex items-center gap-2.5">
             {/* Erase All Data Button */}
+            {/* Import Excel Devices Button */}
+            <button
+              onClick={() => setIsExcelModalOpen(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200/80 text-xs font-semibold transition shadow-sm group"
+              title="Import network devices from Excel spreadsheet (.xlsx, .xls, .csv)"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 group-hover:scale-110 transition" />
+              <span className="hidden sm:inline">Import Excel</span>
+            </button>
+
+            {/* Erase All Data Button */}
             <button
               onClick={handleTriggerReset}
               className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-600 border border-slate-200/80 text-xs font-semibold transition shadow-sm group"
@@ -248,11 +264,11 @@ export const AppShell: React.FC<AppShellProps> = ({
                 className="flex items-center gap-2 p-1 pl-1.5 rounded-2xl bg-white border border-slate-200/80 hover:bg-slate-50 transition shadow-sm"
               >
                 <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-500 text-white font-bold text-xs flex items-center justify-center shadow-sm">
-                  AS
+                  <User className="w-4 h-4" />
                 </div>
                 <div className="hidden sm:block text-left pr-2">
-                  <p className="text-xs font-bold text-slate-800 leading-tight">Ashwin S.</p>
-                  <p className="text-[10px] text-slate-400 font-medium">SecOps Admin</p>
+                  <p className="text-xs font-bold text-slate-800 leading-tight">Admin</p>
+                  <p className="text-[10px] text-slate-400 font-medium">SecOps</p>
                 </div>
                 <ChevronDown className="w-3.5 h-3.5 text-slate-400 mr-1" />
               </button>
@@ -260,8 +276,8 @@ export const AppShell: React.FC<AppShellProps> = ({
               {isProfileOpen && (
                 <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-dropdown border border-slate-100 p-2 z-50 text-xs">
                   <div className="px-3 py-2 border-b border-slate-100">
-                    <p className="font-bold text-slate-800">Ashwin S.</p>
-                    <p className="text-[10px] text-slate-500">ashwin@smansys.edu</p>
+                    <p className="font-bold text-slate-800">Admin</p>
+                    <p className="text-[10px] text-slate-500">admin@medshield.ai</p>
                   </div>
                   <div className="p-1 space-y-1">
                     <button
@@ -304,6 +320,12 @@ export const AppShell: React.FC<AppShellProps> = ({
           {children}
         </main>
       </div>
+
+      {/* Excel Upload Modal Pop-up */}
+      <ExcelUploadModal
+        isOpen={isExcelModalOpen}
+        onClose={() => setIsExcelModalOpen(false)}
+      />
     </div>
   );
 };

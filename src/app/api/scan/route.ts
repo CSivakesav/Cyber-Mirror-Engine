@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { exec } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import util from 'util';
 
 const execAsync = util.promisify(exec);
@@ -18,23 +19,63 @@ export async function POST(req: Request) {
     const startTime = Date.now();
 
     // 1. Identify real local interface and default gateway
-    let localIP = '';
     let gateway = '';
-    let localMac = '';
-
     try {
-      const { stdout: ipOutput } = await execAsync(
-        `powershell -NoProfile -Command "Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'Ethernet*','Wi-Fi*' | Where-Object { $_.IPAddress -notmatch '^169\\.254' } | Select-Object -First 1 IPAddress; (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop"`
+      const { stdout: gwOut } = await execAsync(
+        `powershell -NoProfile -Command "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop"`
       );
-      const matches = ipOutput.match(/(\d+\.\d+\.\d+\.\d+)/g) || [];
-      if (matches.length > 0 && matches[0]) localIP = matches[0];
-      if (matches.length > 1 && matches[matches.length - 1]) gateway = matches[matches.length - 1]!;
+      const cleaned = gwOut.trim();
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(cleaned)) {
+        gateway = cleaned;
+      }
+    } catch {
+      try {
+        const { stdout: routeOut } = await execAsync('route print 0.0.0.0');
+        const match = routeOut.match(/0\.0\.0\.0\s+0\.0\.0\.0\s+(\d+\.\d+\.\d+\.\d+)/);
+        if (match && match[1]) gateway = match[1];
+      } catch {}
+    }
 
-      const { stdout: macOutput } = await execAsync(
-        `powershell -NoProfile -Command "(Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1).MacAddress"`
+    const ifaces = os.networkInterfaces();
+    let localIP = '';
+    let localMac = '';
+    const candidateInterfaces: Array<{ name: string; ip: string; mac: string }> = [];
+
+    for (const name of Object.keys(ifaces)) {
+      const list = ifaces[name] || [];
+      for (const iface of list) {
+        if (iface.family === 'IPv4' && !iface.internal && !iface.address.startsWith('169.254')) {
+          candidateInterfaces.push({
+            name,
+            ip: iface.address,
+            mac: iface.mac.replace(/-/g, ':').toUpperCase(),
+          });
+        }
+      }
+    }
+
+    if (gateway) {
+      const gwPrefix = gateway.split('.').slice(0, 3).join('.');
+      const matchingIface = candidateInterfaces.find((c) => c.ip.startsWith(gwPrefix + '.'));
+      if (matchingIface) {
+        localIP = matchingIface.ip;
+        localMac = matchingIface.mac;
+      }
+    }
+
+    if (!localIP && candidateInterfaces.length > 0) {
+      const nonVirtual = candidateInterfaces.find(
+        (c) =>
+          !c.name.toLowerCase().includes('virtual') &&
+          !c.name.toLowerCase().includes('vbox') &&
+          !c.name.toLowerCase().includes('vmware')
       );
-      localMac = macOutput.trim().replace(/-/g, ':').toUpperCase();
-    } catch (e) {}
+      const chosen = nonVirtual || candidateInterfaces[0];
+      if (chosen) {
+        localIP = chosen.ip;
+        localMac = chosen.mac;
+      }
+    }
 
     // 2. Read live ARP table for physical devices
     const arpMap: Record<string, string> = {};
@@ -44,7 +85,12 @@ export async function POST(req: Request) {
         const parts = line.trim().split(/\s+/);
         if (parts.length >= 2 && parts[0] && parts[1] && /^\d+\.\d+\.\d+\.\d+$/.test(parts[0])) {
           const ip = parts[0];
-          if (!ip.startsWith('224.') && !ip.startsWith('239.') && ip !== '255.255.255.255') {
+          if (
+            !ip.startsWith('224.') &&
+            !ip.startsWith('239.') &&
+            ip !== '255.255.255.255' &&
+            !ip.endsWith('.255')
+          ) {
             arpMap[ip] = parts[1].replace(/-/g, ':').toUpperCase();
           }
         }
@@ -132,7 +178,12 @@ export async function POST(req: Request) {
         }
       } else {
         ip = headerLine.trim();
-        hostname = ip === gateway ? 'Gateway Router' : (ip === localIP ? 'Local Host Workstation' : `Node-${ip.replace(/\./g, '-')}`);
+        hostname =
+          ip === gateway
+            ? 'Default Gateway Router'
+            : ip === localIP
+            ? 'Local Host PC (Workstation)'
+            : `Endpoint-${ip.replace(/\./g, '-')}`;
       }
 
       // Parse open ports
@@ -154,7 +205,7 @@ export async function POST(req: Request) {
       const mac = arpMap[ip] || (ip === localIP ? localMac : 'Direct Link');
 
       // Determine classification strictly from real detected ports and topology
-      let deviceType = 'Workstation';
+      let deviceType = 'Unidentified';
       let zone = 'Core Network';
       let riskLevel = 'Low';
       let description = `Live device responding on ${ip}.`;
@@ -166,17 +217,33 @@ export async function POST(req: Request) {
         riskLevel = 'Low';
         os = 'Embedded Linux / RouterOS';
         description = `Default Gateway with active services on ports: ${openPorts.join(', ') || 'ICMP'}.`;
-      } else if (ip === localIP || openPorts.includes(135) || openPorts.includes(445) || openPorts.includes(3000)) {
-        deviceType = 'Host Workstation';
+      } else if (
+        ip === localIP ||
+        openPorts.includes(135) ||
+        openPorts.includes(445) ||
+        openPorts.includes(3000)
+      ) {
+        deviceType = 'PC / Workstation';
         zone = 'Workstations & Nurse Stations';
         riskLevel = openPorts.includes(445) ? 'Medium' : 'Low';
         os = 'Windows Host OS';
-        description = `Host machine running local services on port(s): ${openPorts.join(', ') || 'active'}.`;
+        description = `Host PC machine running local services on port(s): ${openPorts.join(', ') || 'active'}.`;
+      } else if (openPorts.includes(9100) || openPorts.includes(631)) {
+        deviceType = 'Printer';
+        zone = 'Workstations & Nurse Stations';
+        description = `Network printer discovered with port ${openPorts.join(', ')}.`;
+      } else if (openPorts.includes(22) || openPorts.includes(3306) || openPorts.includes(5432)) {
+        deviceType = 'Server / Database';
+        zone = 'Core Database / EHR';
+        description = `Server node responding on ports: ${openPorts.join(', ')}.`;
       } else {
-        deviceType = 'Network Endpoint';
-        zone = 'Medical IoT (IoMT)';
+        deviceType = 'Unidentified';
+        zone = 'Core Network';
         riskLevel = openPorts.length > 0 ? 'Medium' : 'Low';
-        description = `Discovered network node with ports: ${openPorts.join(', ') || 'None open'}.`;
+        description = `Active device responding on ${ip} with ports: ${openPorts.join(', ') || 'Filtered / Closed'}. Device classification unconfirmed.`;
+        if (hostname.startsWith('Endpoint-')) {
+          hostname = `Unidentified Host (${ip})`;
+        }
       }
 
       discoveredHosts.push({

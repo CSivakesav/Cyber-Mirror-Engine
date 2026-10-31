@@ -18,11 +18,21 @@ import {
   MoreHorizontal,
   ExternalLink,
   Trash2,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { HostDevice, ScanConfig, ScanSummary } from '../../types/cyber';
 import { Badge } from '../shared/Badge';
+import { DeviceIcon } from '../shared/DeviceIcon';
+import { DeviceTypeBadge } from '../shared/DeviceTypeBadge';
+import { ExcelUploadModal } from '../shared/ExcelUploadModal';
+import {
+  getDeviceCategory,
+  getResolvedDeviceType,
+} from '../../utils/deviceClassification';
+import { getCustomDevices } from '../../utils/customDeviceStore';
 
 export const NetworkDiscovery: React.FC = () => {
+  const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
   const [config, setConfig] = useState<ScanConfig>({
     targetSubnet: '',
     scanType: 'Host Discovery (Ping Scan)',
@@ -84,6 +94,65 @@ export const NetworkDiscovery: React.FC = () => {
     };
   }, []);
 
+  // Update a single host's device type dynamically across state
+  const handleUpdateHostDeviceType = (ip: string, newType: string) => {
+    setDiscoveredHosts((prev) =>
+      prev.map((h) => (h.ip === ip ? { ...h, deviceType: newType } : h))
+    );
+    setSelectedHost((prev) =>
+      prev && prev.ip === ip ? { ...prev, deviceType: newType } : prev
+    );
+  };
+
+  // Listen for device classification updates from any component
+  useEffect(() => {
+    const handleTypeUpdate = (e: any) => {
+      const { ip, deviceType } = e.detail || {};
+      if (ip && deviceType) {
+        setDiscoveredHosts((prev) =>
+          prev.map((h) => (h.ip === ip ? { ...h, deviceType } : h))
+        );
+        setSelectedHost((prev) =>
+          prev && prev.ip === ip ? { ...prev, deviceType } : prev
+        );
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('medshield-device-type-updated', handleTypeUpdate);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('medshield-device-type-updated', handleTypeUpdate);
+      }
+    };
+  }, []);
+
+  // Listen for custom Excel imported devices
+  useEffect(() => {
+    const handleCustomUpdated = () => {
+      const custom = getCustomDevices();
+      setDiscoveredHosts((prev) => {
+        const map = new Map<string, HostDevice>();
+        prev.forEach((h) => map.set(h.ip, h));
+        custom.forEach((c) =>
+          map.set(c.ip, { ...c, deviceType: getResolvedDeviceType(c.ip, c.deviceType) })
+        );
+        const res = Array.from(map.values());
+        setSummary((s) => ({ ...s, hostsDiscovered: res.length }));
+        return res;
+      });
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('medshield-custom-devices-updated', handleCustomUpdated);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('medshield-custom-devices-updated', handleCustomUpdated);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     const isErased =
       typeof window !== 'undefined' &&
@@ -112,6 +181,15 @@ export const NetworkDiscovery: React.FC = () => {
               'Click Start Scan to run live Nmap execution on your subnet.',
             ]);
           } else {
+            const custom = getCustomDevices();
+            if (custom.length > 0) {
+              const mapped = custom.map((c) => ({
+                ...c,
+                deviceType: getResolvedDeviceType(c.ip, c.deviceType),
+              }));
+              setDiscoveredHosts(mapped);
+              setSummary((s) => ({ ...s, hostsDiscovered: mapped.length }));
+            }
             setScanOutput([
               `[+] Active Subnet Interface Detected: IPv4 ${localIP}`,
               `[+] Default Gateway: ${gateway}`,
@@ -170,14 +248,18 @@ export const NetworkDiscovery: React.FC = () => {
           ? rawLines.filter((l: any) => typeof l === 'string' && l.trim().length > 0)
           : [];
         const sum = json.data.summary;
-        const hosts = json.data.discoveredHosts;
+        const rawHosts = json.data.discoveredHosts;
+        const resolvedHosts = (Array.isArray(rawHosts) ? rawHosts : []).map((h) => ({
+          ...h,
+          deviceType: getResolvedDeviceType(h.ip, h.deviceType),
+        }));
 
         if (validLines.length === 0) {
           setIsScanning(false);
-          setDiscoveredHosts(Array.isArray(hosts) ? hosts : []);
+          setDiscoveredHosts(resolvedHosts);
           setSummary({
             totalIpsScanned: sum?.totalIpsScanned || 256,
-            hostsDiscovered: Array.isArray(hosts) ? hosts.length : 0,
+            hostsDiscovered: resolvedHosts.length,
             scanDuration: sum?.scanDuration || '1.20 s',
             status: 'Completed',
           });
@@ -195,10 +277,10 @@ export const NetworkDiscovery: React.FC = () => {
           } else {
             clearInterval(interval);
             setIsScanning(false);
-            setDiscoveredHosts(Array.isArray(hosts) ? hosts : []);
+            setDiscoveredHosts(resolvedHosts);
             setSummary({
               totalIpsScanned: sum?.totalIpsScanned || 256,
-              hostsDiscovered: Array.isArray(hosts) ? hosts.length : 0,
+              hostsDiscovered: resolvedHosts.length,
               scanDuration: sum?.scanDuration || '1.20 s',
               status: 'Completed',
             });
@@ -254,6 +336,14 @@ export const NetworkDiscovery: React.FC = () => {
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <h3 className="font-bold text-sm text-slate-800">Scan Parameters</h3>
           <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => setIsExcelModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-semibold transition shadow-sm"
+              title="Import network devices from Excel spreadsheet (.xlsx, .xls, .csv)"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Import Excel</span>
+            </button>
             <button
               onClick={handleResetScanData}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200 text-xs font-semibold transition"
@@ -492,15 +582,21 @@ export const NetworkDiscovery: React.FC = () => {
                     className="hover:bg-slate-50/70 transition cursor-pointer"
                   >
                     <td className="py-3 px-3 font-mono font-bold text-slate-900 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                      <DeviceIcon
+                        category={getDeviceCategory(host.deviceType)}
+                        className="w-3.5 h-3.5 text-slate-400 shrink-0"
+                      />
                       <span>{host.ip}</span>
                     </td>
                     <td className="py-3 px-3 font-mono text-slate-500">{host.mac}</td>
                     <td className="py-3 px-3 font-semibold text-slate-800">{host.hostname}</td>
                     <td className="py-3 px-3">
-                      <span className="px-2.5 py-1 rounded-xl bg-slate-100 text-slate-700 font-medium text-[11px]">
-                        {host.deviceType}
-                      </span>
+                      <DeviceTypeBadge
+                        deviceType={host.deviceType}
+                        ip={host.ip}
+                        onTypeChange={(newType) => handleUpdateHostDeviceType(host.ip, newType)}
+                      />
                     </td>
                     <td className="py-3 px-3 text-slate-500">{host.zone}</td>
                     <td className="py-3 px-3 font-mono text-indigo-600 font-medium">
@@ -561,7 +657,10 @@ export const NetworkDiscovery: React.FC = () => {
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
-                  <Server className="w-5 h-5" />
+                  <DeviceIcon
+                    category={getDeviceCategory(selectedHost.deviceType)}
+                    className="w-5 h-5 text-indigo-600"
+                  />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">{selectedHost.hostname}</h3>
@@ -574,9 +673,16 @@ export const NetworkDiscovery: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-2 gap-3 text-xs">
-              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100">
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 space-y-1">
                 <span className="text-slate-400">Classification</span>
-                <p className="font-semibold text-slate-800 mt-0.5">{selectedHost.deviceType}</p>
+                <div>
+                  <DeviceTypeBadge
+                    deviceType={selectedHost.deviceType}
+                    ip={selectedHost.ip}
+                    size="md"
+                    onTypeChange={(newType) => handleUpdateHostDeviceType(selectedHost.ip, newType)}
+                  />
+                </div>
               </div>
               <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100">
                 <span className="text-slate-400">Subnet Zone</span>
@@ -613,6 +719,12 @@ export const NetworkDiscovery: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Excel Upload Modal */}
+      <ExcelUploadModal
+        isOpen={isExcelModalOpen}
+        onClose={() => setIsExcelModalOpen(false)}
+      />
     </div>
   );
 };

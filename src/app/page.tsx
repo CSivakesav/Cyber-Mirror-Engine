@@ -23,6 +23,9 @@ export default function Home() {
     // Increment key to force remount of all components into fresh state
     setResetKey((prev) => prev + 1);
 
+    // Call backend reset API
+    fetch('/api/reset', { method: 'POST' }).catch(() => {});
+
     // Also dispatch custom event for any listening services
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('medshield-reset-all-data'));
@@ -66,7 +69,7 @@ export default function Home() {
                 System Preferences & Engine Configuration
               </h2>
               <p className="text-xs text-slate-500 font-normal">
-                Smansys Admin Dashboard Configuration & Local Tools Integration
+                MedShield AI Dashboard Configuration & Local Tools Integration
               </p>
             </div>
           </div>

@@ -24,6 +24,13 @@ import {
 } from 'lucide-react';
 import { NavTab } from '../layout/AppShell';
 import { Badge } from '../shared/Badge';
+import { DeviceIcon } from '../shared/DeviceIcon';
+import { DeviceTypeBadge } from '../shared/DeviceTypeBadge';
+import {
+  getDeviceCategory,
+  getResolvedDeviceType,
+} from '../../utils/deviceClassification';
+import { getCustomDevices } from '../../utils/customDeviceStore';
 
 interface DashboardOverviewProps {
   onNavigate: (tab: NavTab) => void;
@@ -119,10 +126,11 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
   let itemCounter = 1;
 
   if (netInfo.gateway) {
+    const gwType = getResolvedDeviceType(netInfo.gateway, 'Gateway / Router');
     assignments.push({
       no: String(itemCounter++).padStart(2, '0'),
       task: 'Default Gateway Assessment',
-      subject: 'Perimeter / Router',
+      subject: gwType,
       ip: netInfo.gateway,
       status: 'Discovered',
       statusVariant: 'green' as const,
@@ -131,10 +139,11 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
   }
 
   if (netInfo.localIP) {
+    const hostType = getResolvedDeviceType(netInfo.localIP, 'PC / Workstation');
     assignments.push({
       no: String(itemCounter++).padStart(2, '0'),
       task: 'Host Machine Security Audit',
-      subject: 'Host Workstation',
+      subject: hostType,
       ip: netInfo.localIP,
       status: 'Active Host',
       statusVariant: 'cyan' as const,
@@ -145,10 +154,11 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
   if (Array.isArray(netInfo.activeNeighbors)) {
     netInfo.activeNeighbors.forEach((neighbor: any) => {
       if (neighbor.ip !== netInfo.gateway && neighbor.ip !== netInfo.localIP) {
+        const neighborType = getResolvedDeviceType(neighbor.ip, 'Unidentified');
         assignments.push({
           no: String(itemCounter++).padStart(2, '0'),
           task: `Live Neighbor Node (${neighbor.mac})`,
-          subject: 'Subnet Client',
+          subject: neighborType,
           ip: neighbor.ip,
           status: 'Online',
           statusVariant: 'green' as const,
@@ -157,6 +167,22 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
       }
     });
   }
+
+  // Include custom devices imported via Excel
+  const customDevices = getCustomDevices();
+  customDevices.forEach((cd) => {
+    if (!assignments.some((a) => a.ip === cd.ip)) {
+      assignments.push({
+        no: String(itemCounter++).padStart(2, '0'),
+        task: cd.hostname || `Host Node (${cd.ip})`,
+        subject: getResolvedDeviceType(cd.ip, cd.deviceType),
+        ip: cd.ip,
+        status: 'Imported',
+        statusVariant: 'cyan' as const,
+        ports: cd.openPorts && cd.openPorts.length > 0 ? cd.openPorts.map((p) => `TCP/${p}`).join(', ') : 'None',
+      });
+    }
+  });
 
   // Map real live events from /api/logs
   const recentEvents = liveEvents.slice(0, 4).map((ev: any, idx: number) => {
@@ -181,7 +207,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
         <div className="lg:col-span-8 smansys-card p-7 bg-white relative overflow-hidden flex flex-col justify-between">
           <div className="max-w-md space-y-3 z-10">
             <h2 className="text-2xl font-bold text-slate-900 tracking-tight">
-              Welcome, Smansys Cyber Mirror Team!
+              Welcome, MedShield AI Cyber Mirror Team!
             </h2>
             <p className="text-xs text-slate-500 leading-relaxed font-normal">
               Manage your network infrastructure and hospital cyber mirror operations with ease.
@@ -475,11 +501,19 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
                   assignments.map((item) => (
                     <tr key={item.no} className="hover:bg-slate-50/70 transition">
                       <td className="py-3 px-3 font-mono text-slate-400">{item.no}</td>
-                      <td className="py-3 px-3 font-semibold text-slate-900">{item.task}</td>
+                      <td className="py-3 px-3 font-semibold text-slate-900 flex items-center gap-2">
+                        <DeviceIcon
+                          category={getDeviceCategory(item.subject)}
+                          className="w-3.5 h-3.5 text-slate-400 shrink-0"
+                        />
+                        <span>{item.task}</span>
+                      </td>
                       <td className="py-3 px-3">
-                        <span className="px-2.5 py-1 rounded-xl bg-slate-100 font-medium text-slate-600 text-[11px]">
-                          {item.subject}
-                        </span>
+                        <DeviceTypeBadge
+                          deviceType={item.subject}
+                          ip={item.ip}
+                          onTypeChange={() => fetchLiveTelemetry()}
+                        />
                       </td>
                       <td className="py-3 px-3 font-mono text-indigo-600 font-medium">{item.ip}</td>
                       <td className="py-3 px-3">

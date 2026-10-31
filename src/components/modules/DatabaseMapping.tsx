@@ -13,11 +13,22 @@ import {
   Code,
   RotateCw,
   ExternalLink,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { HostDevice, NetworkEdge } from '../../types/cyber';
 import { Badge } from '../shared/Badge';
+import { DeviceIcon } from '../shared/DeviceIcon';
+import { DeviceTypeBadge } from '../shared/DeviceTypeBadge';
+import { ExcelUploadModal } from '../shared/ExcelUploadModal';
+import {
+  getDeviceCategory,
+  isUnidentified,
+  getResolvedDeviceType,
+} from '../../utils/deviceClassification';
+import { getCustomDevices } from '../../utils/customDeviceStore';
 
 export const DatabaseMapping: React.FC = () => {
+  const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
   const [hosts, setHosts] = useState<HostDevice[]>([]);
   const [edges, setEdges] = useState<NetworkEdge[]>([]);
   const [selectedHostId, setSelectedHostId] = useState<string>('');
@@ -101,17 +112,17 @@ export const DatabaseMapping: React.FC = () => {
               ip: neighbor.ip,
               mac: neighbor.mac,
               hostname: `Node (${neighbor.ip})`,
-              deviceType: 'Network Endpoint',
-              zone: 'Medical IoT (IoMT)',
+              deviceType: 'Unidentified',
+              zone: 'Core Network',
               vendor: 'Network Client',
               os: 'Embedded Firmware / OS',
-              openPorts: [80, 443],
+              openPorts: [],
               status: 'online',
               riskLevel: 'Low',
               latencyMs: 1.5,
               lastSeen: 'Live Now',
               cves: [],
-              description: `Live physical device detected via ARP cache on local subnet.`,
+              description: `Live physical device detected via ARP cache on local subnet. Classification pending user verification.`,
             });
 
             if (gatewayIP) {
@@ -128,10 +139,40 @@ export const DatabaseMapping: React.FC = () => {
           }
         });
 
-        setHosts(dynamicHosts);
+        // Merge custom Excel imported devices into topology graph
+        const customDevices = getCustomDevices();
+        customDevices.forEach((cd) => {
+          if (!dynamicHosts.some((h) => h.ip === cd.ip)) {
+            const nodeId = cd.id || `custom-${cd.ip.replace(/\./g, '-')}`;
+            dynamicHosts.push({
+              ...cd,
+              id: nodeId,
+              deviceType: getResolvedDeviceType(cd.ip, cd.deviceType),
+            });
+
+            if (gatewayIP) {
+              dynamicEdges.push({
+                id: `e-${nodeId}-gw`,
+                source: nodeId,
+                target: 'real-gw',
+                protocol: 'Subnet Route',
+                port: cd.openPorts && cd.openPorts.length > 0 ? cd.openPorts[0]! : 80,
+                trafficVolumeMb: 35,
+                status: 'normal',
+              });
+            }
+          }
+        });
+
+        const resolvedHosts = dynamicHosts.map((h) => ({
+          ...h,
+          deviceType: getResolvedDeviceType(h.ip, h.deviceType),
+        }));
+
+        setHosts(resolvedHosts);
         setEdges(dynamicEdges);
-        if (dynamicHosts.length > 0) {
-          setSelectedHostId(dynamicHosts[0].id);
+        if (resolvedHosts.length > 0) {
+          setSelectedHostId(resolvedHosts[0].id);
         }
         setIsLoading(false);
       })
@@ -139,6 +180,46 @@ export const DatabaseMapping: React.FC = () => {
         setIsLoading(false);
       });
   };
+
+  const handleUpdateHostType = (ip: string, newType: string) => {
+    setHosts((prev) =>
+      prev.map((h) => (h.ip === ip ? { ...h, deviceType: newType } : h))
+    );
+  };
+
+  useEffect(() => {
+    const handleTypeUpdate = (e: any) => {
+      const { ip, deviceType } = e.detail || {};
+      if (ip && deviceType) {
+        setHosts((prev) =>
+          prev.map((h) => (h.ip === ip ? { ...h, deviceType } : h))
+        );
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('medshield-device-type-updated', handleTypeUpdate);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('medshield-device-type-updated', handleTypeUpdate);
+      }
+    };
+  }, []);
+
+  // Listen for custom Excel imported devices
+  useEffect(() => {
+    const handleCustomUpdated = () => {
+      fetchTopologyData();
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('medshield-custom-devices-updated', handleCustomUpdated);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('medshield-custom-devices-updated', handleCustomUpdated);
+      }
+    };
+  }, []);
 
   const handleLoadTopology = () => {
     if (typeof window !== 'undefined') {
@@ -186,18 +267,31 @@ export const DatabaseMapping: React.FC = () => {
   
   // Place gateway at top center
   if (hosts.some((h) => h.id === 'real-gw')) {
-    nodePositions['real-gw'] = { x: 450, y: 110 };
+    nodePositions['real-gw'] = { x: 450, y: 100 };
   }
 
-  // Distribute other nodes along the bottom
+  // Distribute other nodes along the canvas
   const totalNonGw = nonGwHosts.length;
   nonGwHosts.forEach((h, idx) => {
-    const spacing = 600 / Math.max(totalNonGw, 1);
-    const startX = 450 - (spacing * (totalNonGw - 1)) / 2;
-    nodePositions[h.id] = {
-      x: startX + idx * spacing,
-      y: 320,
-    };
+    if (totalNonGw <= 5) {
+      const spacing = 620 / Math.max(totalNonGw, 1);
+      const startX = 450 - (spacing * (totalNonGw - 1)) / 2;
+      nodePositions[h.id] = {
+        x: Math.round(startX + idx * spacing),
+        y: 320,
+      };
+    } else {
+      // 2 tiers for larger topologies
+      const isTopTier = idx % 2 === 0;
+      const tierIndex = Math.floor(idx / 2);
+      const tierTotal = isTopTier ? Math.ceil(totalNonGw / 2) : Math.floor(totalNonGw / 2);
+      const spacing = 600 / Math.max(tierTotal, 1);
+      const startX = 450 - (spacing * (tierTotal - 1)) / 2;
+      nodePositions[h.id] = {
+        x: Math.round(startX + tierIndex * spacing),
+        y: isTopTier ? 220 : 340,
+      };
+    }
   });
 
   return (
@@ -211,30 +305,42 @@ export const DatabaseMapping: React.FC = () => {
           </p>
         </div>
 
-        {/* View toggle */}
-        <div className="flex items-center gap-1 p-1 rounded-2xl bg-white border border-slate-200/80 text-xs shadow-sm">
+        <div className="flex items-center gap-2">
+          {/* Import Excel Devices Button */}
           <button
-            onClick={() => setActiveTab('visualizer')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-semibold transition ${
-              activeTab === 'visualizer'
-                ? 'bg-slate-900 text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
+            onClick={() => setIsExcelModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200/80 text-xs font-semibold transition shadow-sm group"
+            title="Import network devices from Excel spreadsheet (.xlsx, .xls, .csv)"
           >
-            <Share2 className="w-3.5 h-3.5" />
-            <span>Topology Graph</span>
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 group-hover:scale-110 transition" />
+            <span>Import Excel</span>
           </button>
-          <button
-            onClick={() => setActiveTab('schema')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-semibold transition ${
-              activeTab === 'schema'
-                ? 'bg-slate-900 text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Code className="w-3.5 h-3.5" />
-            <span>Cypher / Graph Schema</span>
-          </button>
+
+          {/* View toggle */}
+          <div className="flex items-center gap-1 p-1 rounded-2xl bg-white border border-slate-200/80 text-xs shadow-sm">
+            <button
+              onClick={() => setActiveTab('visualizer')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-semibold transition ${
+                activeTab === 'visualizer'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span>Topology Graph</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('schema')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-semibold transition ${
+                activeTab === 'schema'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Code className="w-3.5 h-3.5" />
+              <span>Cypher / Graph Schema</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -247,14 +353,17 @@ export const DatabaseMapping: React.FC = () => {
                 Live Subnet Topology Graph ({hosts.length} Active Nodes)
               </h3>
               <div className="flex items-center gap-3 text-[11px] font-medium text-slate-500">
-                <span className="flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Gateway
+                <span className="flex items-center gap-1.5">
+                  <DeviceIcon category="router" className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Gateway</span>
                 </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" /> Host Workstation
+                <span className="flex items-center gap-1.5">
+                  <DeviceIcon category="pc" className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>PC / Workstation</span>
                 </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> Discovered Client
+                <span className="flex items-center gap-1.5">
+                  <DeviceIcon category="unidentified" className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Unidentified (?)</span>
                 </span>
               </div>
             </div>
@@ -324,38 +433,171 @@ export const DatabaseMapping: React.FC = () => {
                     const pos = nodePositions[host.id];
                     if (!pos) return null;
                     const isSelected = host.id === selectedHostId;
-                    const isGw = host.id === 'real-gw';
+                    const cat = getDeviceCategory(host.deviceType);
+                    const unident = isUnidentified(host.deviceType);
+
+                    const nodeColor =
+                      cat === 'router'
+                        ? '#10b981'
+                        : cat === 'pc'
+                        ? '#6366f1'
+                        : cat === 'server'
+                        ? '#a855f7'
+                        : '#f59e0b';
 
                     return (
                       <g
                         key={host.id}
                         transform={`translate(${pos.x}, ${pos.y})`}
                         onClick={() => setSelectedHostId(host.id)}
-                        className="cursor-pointer transition-all duration-300"
+                        className="cursor-pointer transition-all duration-300 group"
                       >
+                        {/* Selected pulse glow */}
                         {isSelected && (
-                          <circle
-                            r="34"
+                          <rect
+                            x="-28"
+                            y="-28"
+                            width="56"
+                            height="56"
+                            rx="18"
                             fill="none"
-                            stroke="#6366f1"
-                            strokeWidth="2"
+                            stroke={nodeColor}
+                            strokeWidth="2.5"
                             opacity="0.8"
                             className="animate-pulse"
                           />
                         )}
 
-                        <circle
-                          r="24"
+                        {/* Node Card / Squircle */}
+                        <rect
+                          x="-24"
+                          y="-24"
+                          width="48"
+                          height="48"
+                          rx="15"
                           fill="#ffffff"
-                          stroke={isSelected ? '#6366f1' : isGw ? '#10b981' : '#f59e0b'}
+                          stroke={isSelected ? '#6366f1' : nodeColor}
                           strokeWidth={isSelected ? '3' : '2'}
                         />
 
-                        <circle
-                          r="8"
-                          fill={isSelected ? '#6366f1' : isGw ? '#10b981' : '#f59e0b'}
-                        />
+                        {/* Render the Specific Device Icon instead of circle */}
+                        {cat === 'pc' && (
+                          <g transform="translate(0, -2)">
+                            {/* PC Monitor Screen */}
+                            <rect
+                              x="-11"
+                              y="-10"
+                              width="22"
+                              height="15"
+                              rx="2.5"
+                              fill={isSelected ? '#e0e7ff' : '#f1f5f9'}
+                              stroke="#6366f1"
+                              strokeWidth="1.8"
+                            />
+                            {/* Inner Display Accent */}
+                            <line x1="-7" y1="-7" x2="7" y2="-7" stroke="#818cf8" strokeWidth="1.2" strokeLinecap="round" />
+                            <line x1="-7" y1="-3" x2="2" y2="-3" stroke="#cbd5e1" strokeWidth="1.2" strokeLinecap="round" />
+                            {/* Monitor Stand */}
+                            <line x1="0" y1="5" x2="0" y2="10" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" />
+                            <line x1="-6" y1="10" x2="6" y2="10" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" />
+                          </g>
+                        )}
 
+                        {cat === 'router' && (
+                          <g transform="translate(0, 0)">
+                            {/* Antennas */}
+                            <line x1="-8" y1="-5" x2="-8" y2="-12" stroke="#10b981" strokeWidth="2" strokeLinecap="round" />
+                            <line x1="8" y1="-5" x2="8" y2="-12" stroke="#10b981" strokeWidth="2" strokeLinecap="round" />
+                            <circle cx="-8" cy="-12" r="1.5" fill="#10b981" />
+                            <circle cx="8" cy="-12" r="1.5" fill="#10b981" />
+                            {/* Router Body */}
+                            <rect
+                              x="-13"
+                              y="-5"
+                              width="26"
+                              height="14"
+                              rx="3.5"
+                              fill={isSelected ? '#d1fae5' : '#f1f5f9'}
+                              stroke="#10b981"
+                              strokeWidth="1.8"
+                            />
+                            {/* LED indicators */}
+                            <circle cx="-6" cy="2" r="1.5" fill="#10b981" />
+                            <circle cx="0" cy="2" r="1.5" fill="#10b981" />
+                            <circle cx="6" cy="2" r="1.5" fill="#10b981" />
+                          </g>
+                        )}
+
+                        {unident && (
+                          <g transform="translate(0, 0)">
+                            {/* Amber Question Mark Icon */}
+                            <rect
+                              x="-13"
+                              y="-13"
+                              width="26"
+                              height="26"
+                              rx="8"
+                              fill="#fef3c7"
+                              stroke="#f59e0b"
+                              strokeWidth="1.8"
+                            />
+                            <path
+                              d="M -4 -4 C -4 -8, 4 -8, 4 -4 C 4 -1, 0 0, 0 3"
+                              fill="none"
+                              stroke="#d97706"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                            />
+                            <circle cx="0" cy="7" r="1.8" fill="#d97706" />
+                          </g>
+                        )}
+
+                        {cat === 'server' && (
+                          <g transform="translate(0, 0)">
+                            {/* Server Bay 1 */}
+                            <rect
+                              x="-12"
+                              y="-11"
+                              width="24"
+                              height="9"
+                              rx="2"
+                              fill={isSelected ? '#ede9fe' : '#f1f5f9'}
+                              stroke="#a855f7"
+                              strokeWidth="1.8"
+                            />
+                            <circle cx="6" cy="-6.5" r="1.2" fill="#a855f7" />
+                            {/* Server Bay 2 */}
+                            <rect
+                              x="-12"
+                              y="2"
+                              width="24"
+                              height="9"
+                              rx="2"
+                              fill={isSelected ? '#ede9fe' : '#f1f5f9'}
+                              stroke="#a855f7"
+                              strokeWidth="1.8"
+                            />
+                            <circle cx="6" cy="6.5" r="1.2" fill="#a855f7" />
+                          </g>
+                        )}
+
+                        {cat !== 'pc' && cat !== 'router' && !unident && cat !== 'server' && (
+                          <g transform="translate(0, 0)">
+                            <rect
+                              x="-12"
+                              y="-12"
+                              width="24"
+                              height="24"
+                              rx="6"
+                              fill="#f8fafc"
+                              stroke={nodeColor}
+                              strokeWidth="1.8"
+                            />
+                            <circle cx="0" cy="0" r="4" fill={nodeColor} />
+                          </g>
+                        )}
+
+                        {/* Labels */}
                         <text
                           x="0"
                           y="42"
@@ -395,18 +637,29 @@ export const DatabaseMapping: React.FC = () => {
                   </Badge>
                 </div>
 
-                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-1">
-                  <h4 className="font-bold text-slate-900 text-sm">{selectedHost.hostname}</h4>
-                  <p className="font-mono text-xs text-indigo-600 font-medium">
-                    {selectedHost.ip} • {selectedHost.mac}
-                  </p>
-                  <p className="text-[11px] text-slate-500 pt-1">{selectedHost.zone}</p>
+                <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-slate-50 border border-slate-100">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold shrink-0">
+                    <DeviceIcon
+                      category={getDeviceCategory(selectedHost.deviceType)}
+                      className="w-5 h-5 text-indigo-600"
+                    />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm">{selectedHost.hostname}</h4>
+                    <p className="font-mono text-xs text-indigo-600 font-medium">
+                      {selectedHost.ip} • {selectedHost.mac}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="space-y-2 text-xs">
-                  <div className="flex justify-between py-1.5 border-b border-slate-100">
+                  <div className="flex justify-between items-center py-1.5 border-b border-slate-100">
                     <span className="text-slate-400">Classification:</span>
-                    <span className="text-slate-800 font-semibold">{selectedHost.deviceType}</span>
+                    <DeviceTypeBadge
+                      deviceType={selectedHost.deviceType}
+                      ip={selectedHost.ip}
+                      onTypeChange={(newType) => handleUpdateHostType(selectedHost.ip, newType)}
+                    />
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-slate-100">
                     <span className="text-slate-400">Operating System:</span>
@@ -451,6 +704,12 @@ ${edges.map((e) => `CREATE (n_${e.source.replace(/-/g, '_')})-[:${e.protocol.rep
           </pre>
         </div>
       )}
+
+      {/* Excel Upload Modal */}
+      <ExcelUploadModal
+        isOpen={isExcelModalOpen}
+        onClose={() => setIsExcelModalOpen(false)}
+      />
     </div>
   );
 };

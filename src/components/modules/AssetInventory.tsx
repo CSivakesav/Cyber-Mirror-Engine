@@ -11,9 +11,18 @@ import {
   Shield,
   Layers,
   Network,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { HostDevice, SubnetZone } from '../../types/cyber';
 import { Badge } from '../shared/Badge';
+import { DeviceIcon } from '../shared/DeviceIcon';
+import { DeviceTypeBadge } from '../shared/DeviceTypeBadge';
+import { ExcelUploadModal } from '../shared/ExcelUploadModal';
+import {
+  getDeviceCategory,
+  getResolvedDeviceType,
+} from '../../utils/deviceClassification';
+import { getCustomDevices } from '../../utils/customDeviceStore';
 
 export const AssetInventory: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -21,6 +30,7 @@ export const AssetInventory: React.FC = () => {
   const [selectedDevice, setSelectedDevice] = useState<HostDevice | null>(null);
   const [assets, setAssets] = useState<HostDevice[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isExcelModalOpen, setIsExcelModalOpen] = useState<boolean>(false);
 
   const zones: SubnetZone[] = [
     'Perimeter / DMZ',
@@ -86,23 +96,39 @@ export const AssetInventory: React.FC = () => {
                 ip: neighbor.ip,
                 mac: neighbor.mac,
                 hostname: `Endpoint (${neighbor.ip})`,
-                deviceType: 'Network Client',
-                zone: 'Medical IoT (IoMT)',
+                deviceType: 'Unidentified',
+                zone: 'Core Network',
                 vendor: 'Active Network Client',
                 os: 'Embedded Firmware / OS',
-                openPorts: [80, 443],
+                openPorts: [],
                 status: 'online',
                 riskLevel: 'Low',
                 latencyMs: 1.8,
                 lastSeen: 'Live Now',
                 cves: [],
-                description: `Live physical device detected via ARP cache on ${net.subnet || 'local network'}.`,
+                description: `Live physical device detected via ARP cache on ${net.subnet || 'local network'}. Classification pending user verification.`,
               });
             }
           });
         }
 
-        setAssets(discovered);
+        const resolvedAssets = discovered.map((d) => ({
+          ...d,
+          deviceType: getResolvedDeviceType(d.ip, d.deviceType),
+        }));
+
+        // Merge in any custom uploaded devices from Excel
+        const customDevices = getCustomDevices();
+        const mergedMap = new Map<string, HostDevice>();
+        resolvedAssets.forEach((d) => mergedMap.set(d.ip, d));
+        customDevices.forEach((cd) =>
+          mergedMap.set(cd.ip, {
+            ...cd,
+            deviceType: getResolvedDeviceType(cd.ip, cd.deviceType),
+          })
+        );
+
+        setAssets(Array.from(mergedMap.values()));
         setIsLoading(false);
       })
       .catch(() => setIsLoading(false));
@@ -142,6 +168,46 @@ export const AssetInventory: React.FC = () => {
     };
   }, []);
 
+  const handleUpdateAssetType = (ip: string, newType: string) => {
+    setAssets((prev) =>
+      prev.map((a) => (a.ip === ip ? { ...a, deviceType: newType } : a))
+    );
+    setSelectedDevice((prev) =>
+      prev && prev.ip === ip ? { ...prev, deviceType: newType } : prev
+    );
+  };
+
+  useEffect(() => {
+    const handleTypeUpdate = (e: any) => {
+      const { ip, deviceType } = e.detail || {};
+      if (ip && deviceType) {
+        setAssets((prev) =>
+          prev.map((a) => (a.ip === ip ? { ...a, deviceType } : a))
+        );
+        setSelectedDevice((prev) =>
+          prev && prev.ip === ip ? { ...prev, deviceType } : prev
+        );
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('medshield-device-type-updated', handleTypeUpdate);
+    }
+
+    const handleCustomDevicesUpdate = () => {
+      fetchDynamicAssets();
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('medshield-custom-devices-updated', handleCustomDevicesUpdate);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('medshield-device-type-updated', handleTypeUpdate);
+        window.removeEventListener('medshield-custom-devices-updated', handleCustomDevicesUpdate);
+      }
+    };
+  }, []);
+
   const filteredHosts = assets.filter((h) => {
     const matchesZone = selectedZone === 'all' || h.zone === selectedZone;
     const matchesSearch =
@@ -166,13 +232,22 @@ export const AssetInventory: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={handleLoadAssets}
-          className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition shadow-sm"
-        >
-          <RotateCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-          <span>Refresh Inventory</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsExcelModalOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-semibold transition shadow-sm"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Import Excel Devices</span>
+          </button>
+          <button
+            onClick={handleLoadAssets}
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition shadow-sm"
+          >
+            <RotateCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}
@@ -237,7 +312,10 @@ export const AssetInventory: React.FC = () => {
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2.5">
                     <span className="p-2.5 rounded-2xl bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition">
-                      <Server className="w-4 h-4" />
+                      <DeviceIcon
+                        category={getDeviceCategory(host.deviceType)}
+                        className="w-4 h-4"
+                      />
                     </span>
                     <div>
                       <h3 className="font-bold text-slate-900 text-sm group-hover:text-indigo-600 transition">
@@ -253,9 +331,13 @@ export const AssetInventory: React.FC = () => {
                 </div>
 
                 <div className="space-y-2 text-xs pt-1">
-                  <div className="flex justify-between py-1 border-b border-slate-100">
-                    <span className="text-slate-400">Device Type</span>
-                    <span className="text-slate-800 font-medium">{host.deviceType}</span>
+                  <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                    <span className="text-slate-400">Classification</span>
+                    <DeviceTypeBadge
+                      deviceType={host.deviceType}
+                      ip={host.ip}
+                      onTypeChange={(newType) => handleUpdateAssetType(host.ip, newType)}
+                    />
                   </div>
                   <div className="flex justify-between py-1 border-b border-slate-100">
                     <span className="text-slate-400">Subnet Zone</span>
@@ -299,7 +381,10 @@ export const AssetInventory: React.FC = () => {
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-3">
                 <span className="p-2.5 rounded-2xl bg-indigo-50 text-indigo-600">
-                  <Server className="w-5 h-5" />
+                  <DeviceIcon
+                    category={getDeviceCategory(selectedDevice.deviceType)}
+                    className="w-5 h-5 text-indigo-600"
+                  />
                 </span>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">{selectedDevice.hostname}</h3>
@@ -316,9 +401,16 @@ export const AssetInventory: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-2 gap-3 text-xs">
-              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100">
-                <span className="text-slate-400">Operating System</span>
-                <p className="font-bold text-slate-900 mt-0.5">{selectedDevice.os}</p>
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 space-y-1">
+                <span className="text-slate-400">Classification</span>
+                <div>
+                  <DeviceTypeBadge
+                    deviceType={selectedDevice.deviceType}
+                    ip={selectedDevice.ip}
+                    size="md"
+                    onTypeChange={(newType) => handleUpdateAssetType(selectedDevice.ip, newType)}
+                  />
+                </div>
               </div>
               <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100">
                 <span className="text-slate-400">Hardware / NIC</span>
@@ -337,6 +429,13 @@ export const AssetInventory: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Excel Upload Modal */}
+      <ExcelUploadModal
+        isOpen={isExcelModalOpen}
+        onClose={() => setIsExcelModalOpen(false)}
+        onSuccess={() => fetchDynamicAssets()}
+      />
     </div>
   );
 };
