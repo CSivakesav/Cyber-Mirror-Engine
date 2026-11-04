@@ -6,10 +6,12 @@ import { DashboardOverview } from '../components/modules/DashboardOverview';
 import { NetworkDiscovery } from '../components/modules/NetworkDiscovery';
 import { DatabaseMapping } from '../components/modules/DatabaseMapping';
 import { SimulationEngine } from '../components/modules/SimulationEngine';
+import { DockerImplementation } from '../components/modules/DockerImplementation';
 import { LogPreprocessing } from '../components/modules/LogPreprocessing';
 import { AssetInventory } from '../components/modules/AssetInventory';
 import { Settings as SettingsIcon } from 'lucide-react';
 import { Badge } from '../components/shared/Badge';
+import { clearDockerTwins } from '../utils/dockerStore';
 
 export default function Home() {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
@@ -20,6 +22,7 @@ export default function Home() {
       localStorage.setItem('medshield_fresh_clean_state', 'true');
       localStorage.removeItem('medshield_cached_scan_data');
     }
+    clearDockerTwins();
     // Increment key to force remount of all components into fresh state
     setResetKey((prev) => prev + 1);
 
@@ -47,7 +50,10 @@ export default function Home() {
       {currentTab === 'database-mapping' && (
         <DatabaseMapping key={resetKey} />
       )}
-      {currentTab === 'simulation-engine' && (
+      {(currentTab === 'cyber-mirror-engine' || currentTab === 'docker-twins') && (
+        <DockerImplementation key={resetKey} />
+      )}
+      {(currentTab === 'live-probe-analyzer' || currentTab === 'simulation-engine') && (
         <SimulationEngine key={resetKey} />
       )}
       {currentTab === 'log-preprocessing' && (
@@ -120,6 +126,14 @@ export default function Home() {
                   <p className="text-slate-400 font-mono text-[11px]">Companion Scripts (NetworkX, Scapy, Pydantic)</p>
                 </div>
                 <Badge variant="green">Ready</Badge>
+              </div>
+
+              <div className="flex items-center justify-between text-xs py-1">
+                <div>
+                  <p className="font-bold text-slate-800">Docker Digital Twin Mesh Engine</p>
+                  <p className="text-slate-400 font-mono text-[11px]">Auto Dockerfile Synthesizer & Virtual Mesh Bridge</p>
+                </div>
+                <Badge variant="green">Active & Operational</Badge>
               </div>
 
               <div className="flex items-center justify-between text-xs py-1">

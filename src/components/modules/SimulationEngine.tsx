@@ -190,7 +190,7 @@ export const SimulationEngine: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-            Cyber Mirror Simulation Engine
+            Live Probe Analyzer
           </h2>
           <p className="text-xs text-slate-500 font-normal">
             Live Socket Prober Executing Real TCP Probes Against Local Subnet Targets

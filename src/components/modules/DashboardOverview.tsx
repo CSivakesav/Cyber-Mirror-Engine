@@ -9,10 +9,6 @@ import {
   Server,
   ArrowRight,
   MoreHorizontal,
-  Bell,
-  Calendar as CalendarIcon,
-  ChevronLeft,
-  ChevronRight,
   Edit2,
   Trash2,
   CheckCircle2,
@@ -21,6 +17,7 @@ import {
   Search,
   SlidersHorizontal,
   ExternalLink,
+  Container,
 } from 'lucide-react';
 import { NavTab } from '../layout/AppShell';
 import { Badge } from '../shared/Badge';
@@ -31,12 +28,15 @@ import {
   getResolvedDeviceType,
 } from '../../utils/deviceClassification';
 import { getCustomDevices } from '../../utils/customDeviceStore';
+import { HostDevice } from '../../types/cyber';
 
 interface DashboardOverviewProps {
   onNavigate: (tab: NavTab) => void;
 }
 
 export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate }) => {
+  const [isMounted, setIsMounted] = useState<boolean>(false);
+  const [customDevices, setCustomDevices] = useState<HostDevice[]>([]);
   const [netInfo, setNetInfo] = useState<any>({
     localIP: '',
     gateway: '',
@@ -68,12 +68,14 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
   };
 
   useEffect(() => {
+    setIsMounted(true);
     const isErased =
       typeof window !== 'undefined' &&
       localStorage.getItem('medshield_fresh_clean_state') === 'true';
 
     if (!isErased) {
       fetchLiveTelemetry();
+      setCustomDevices(getCustomDevices());
     } else {
       setNetInfo({
         localIP: '',
@@ -83,7 +85,17 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
         activeNeighbors: [],
       });
       setLiveEvents([]);
+      setCustomDevices([]);
     }
+
+    // Listen for custom devices updates
+    const handleCustomDevicesUpdate = (e: any) => {
+      if (e.detail?.devices) {
+        setCustomDevices(e.detail.devices);
+      } else {
+        setCustomDevices(getCustomDevices());
+      }
+    };
 
     // Listen for global erase/reset event
     const handleGlobalReset = () => {
@@ -95,14 +107,17 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
         activeNeighbors: [],
       });
       setLiveEvents([]);
+      setCustomDevices([]);
     };
 
     if (typeof window !== 'undefined') {
       window.addEventListener('medshield-reset-all-data', handleGlobalReset);
+      window.addEventListener('medshield-custom-devices-updated', handleCustomDevicesUpdate);
     }
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener('medshield-reset-all-data', handleGlobalReset);
+        window.removeEventListener('medshield-custom-devices-updated', handleCustomDevicesUpdate);
       }
     };
   }, []);
@@ -168,21 +183,22 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
     });
   }
 
-  // Include custom devices imported via Excel
-  const customDevices = getCustomDevices();
-  customDevices.forEach((cd) => {
-    if (!assignments.some((a) => a.ip === cd.ip)) {
-      assignments.push({
-        no: String(itemCounter++).padStart(2, '0'),
-        task: cd.hostname || `Host Node (${cd.ip})`,
-        subject: getResolvedDeviceType(cd.ip, cd.deviceType),
-        ip: cd.ip,
-        status: 'Imported',
-        statusVariant: 'cyan' as const,
-        ports: cd.openPorts && cd.openPorts.length > 0 ? cd.openPorts.map((p) => `TCP/${p}`).join(', ') : 'None',
-      });
-    }
-  });
+  // Include custom devices imported via Excel or presets (hydrated safely via state)
+  if (isMounted) {
+    customDevices.forEach((cd) => {
+      if (!assignments.some((a) => a.ip === cd.ip)) {
+        assignments.push({
+          no: String(itemCounter++).padStart(2, '0'),
+          task: cd.hostname || `Host Node (${cd.ip})`,
+          subject: getResolvedDeviceType(cd.ip, cd.deviceType),
+          ip: cd.ip,
+          status: 'Imported',
+          statusVariant: 'cyan' as const,
+          ports: cd.openPorts && cd.openPorts.length > 0 ? cd.openPorts.map((p) => `TCP/${p}`).join(', ') : 'None',
+        });
+      }
+    });
+  }
 
   // Map real live events from /api/logs
   const recentEvents = liveEvents.slice(0, 4).map((ev: any, idx: number) => {
@@ -235,6 +251,14 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
                 <Network className="w-3.5 h-3.5" />
                 <span>Explore Topology</span>
               </button>
+
+              <button
+                onClick={() => handleStartDemonstration('cyber-mirror-engine')}
+                className="px-4 py-2.5 rounded-2xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs border border-indigo-200 transition flex items-center gap-2"
+              >
+                <Container className="w-3.5 h-3.5" />
+                <span>Cyber Mirror Engine</span>
+              </button>
             </div>
           </div>
 
@@ -258,7 +282,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
           <div className="p-4 rounded-3xl bg-[#fef3c7] border border-[#fde68a] flex items-center justify-between shadow-card">
             <div>
               <p className="text-xs font-semibold text-amber-900/80">Total Subnet Scope</p>
-              <h3 className="text-2xl font-extrabold text-amber-950 mt-1">
+              <h3 suppressHydrationWarning className="text-2xl font-extrabold text-amber-950 mt-1">
                 {netInfo.subnet ? '256 IPs' : 'Pending'}
               </h3>
               <p className="text-[10px] text-amber-800/80 font-mono mt-0.5">
@@ -274,7 +298,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
           <div className="p-4 rounded-3xl bg-[#ede9fe] border border-[#ddd6fe] flex items-center justify-between shadow-card">
             <div>
               <p className="text-xs font-semibold text-indigo-900/80">Active Discovered Hosts</p>
-              <h3 className="text-2xl font-extrabold text-indigo-950 mt-1">
+              <h3 suppressHydrationWarning className="text-2xl font-extrabold text-indigo-950 mt-1">
                 {totalDiscoveredNodes} {totalDiscoveredNodes === 1 ? 'Live Node' : 'Live Nodes'}
               </h3>
               <p className="text-[10px] text-indigo-800/80 font-mono mt-0.5">
@@ -290,7 +314,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
           <div className="p-4 rounded-3xl bg-[#ffedd5] border border-[#fed7aa] flex items-center justify-between shadow-card">
             <div>
               <p className="text-xs font-semibold text-orange-900/80">Nmap Installed Binary</p>
-              <h3 className="text-2xl font-extrabold text-orange-950 mt-1">Nmap 7.92</h3>
+              <h3 suppressHydrationWarning className="text-2xl font-extrabold text-orange-950 mt-1">Nmap 7.92</h3>
               <p className="text-[10px] text-orange-800/80 font-mono mt-0.5">bin/nmap-7.92/nmap.exe</p>
             </div>
             <button className="w-8 h-8 rounded-full bg-white/60 hover:bg-white flex items-center justify-center text-orange-900 transition">
@@ -300,164 +324,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
         </div>
       </div>
 
-      {/* Middle Row: Donut Chart, Notice Board, Calendar */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
-        {/* Smansys Donut Chart Card */}
-        <div className="md:col-span-4 smansys-card p-5 bg-white flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-            <h4 className="font-bold text-sm text-slate-800">Network Host Telemetry</h4>
-            <MoreHorizontal className="w-4 h-4 text-slate-400" />
-          </div>
-
-          <div className="py-4 flex items-center justify-center">
-            <div className="relative w-36 h-36 flex items-center justify-center">
-              <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
-                <circle
-                  cx="18"
-                  cy="18"
-                  r="14"
-                  fill="none"
-                  stroke="#ede9fe"
-                  strokeWidth="4.5"
-                />
-                <circle
-                  cx="18"
-                  cy="18"
-                  r="14"
-                  fill="none"
-                  stroke="#6366f1"
-                  strokeWidth="4.5"
-                  strokeDasharray={`${totalDiscoveredNodes > 0 ? 75 : 0} 100`}
-                  strokeLinecap="round"
-                />
-                <circle
-                  cx="18"
-                  cy="18"
-                  r="14"
-                  fill="none"
-                  stroke="#10b981"
-                  strokeWidth="4.5"
-                  strokeDasharray={`${totalDiscoveredNodes > 0 ? 25 : 0} 100`}
-                  strokeDashoffset="-75"
-                  strokeLinecap="round"
-                />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-xl font-extrabold text-slate-900">
-                  {totalDiscoveredNodes > 0 ? '100%' : '0%'}
-                </span>
-                <span className="text-[10px] text-slate-400 font-medium">Live Data</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-around pt-2 border-t border-slate-100 text-[11px] font-medium text-slate-600">
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" /> Host &amp; Gateway
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Neighbors ({netInfo.activeNeighbors?.length || 0})
-            </span>
-          </div>
-        </div>
-
-        {/* Smansys Notice Board Card */}
-        <div className="md:col-span-5 smansys-card p-5 bg-white flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-            <h4 className="font-bold text-sm text-slate-800">Notice Board</h4>
-            <span
-              onClick={() => onNavigate('network-discovery')}
-              className="text-[11px] font-semibold text-indigo-600 hover:underline cursor-pointer"
-            >
-              view scans
-            </span>
-          </div>
-
-          <div className="space-y-3 py-2">
-            <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-100 flex items-start gap-3">
-              <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0 mt-0.5">
-                <Bell className="w-4 h-4" />
-              </div>
-              <div className="space-y-0.5">
-                <h5 className="font-bold text-xs text-slate-800">Live Nmap 7.92 Installed</h5>
-                <p className="text-[11px] text-slate-500 leading-relaxed">
-                  Real Nmap executable ready in <code>bin/nmap-7.92/nmap.exe</code> for local subnet scans.
-                </p>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-100 flex items-start gap-3">
-              <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center flex-shrink-0 mt-0.5">
-                <Bell className="w-4 h-4" />
-              </div>
-              <div className="space-y-0.5">
-                <h5 className="font-bold text-xs text-slate-800">Windows Sysmon Telemetry</h5>
-                <p className="text-[11px] text-slate-500 leading-relaxed">
-                  Ingesting live Windows system event IDs and active TCP sockets via PowerShell cmdlets.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[11px]">
-            <button
-              onClick={() => handleStartDemonstration('network-discovery')}
-              className="text-xs font-semibold text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-xl transition"
-            >
-              + Quick Scan Subnet
-            </button>
-            <button
-              onClick={handleManualRefresh}
-              className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition"
-            >
-              Refresh Telemetry
-            </button>
-          </div>
-        </div>
-
-        {/* Smansys Calendar Widget */}
-        <div className="md:col-span-3 smansys-card p-5 bg-white flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-            <span className="text-xs font-bold text-slate-800">October 2026</span>
-            <div className="flex items-center gap-1">
-              <button className="w-6 h-6 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600">
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-              <button className="w-6 h-6 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600">
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-7 gap-1 text-center text-[10px] py-2 font-medium">
-            <span className="text-slate-400">S</span>
-            <span className="text-slate-400">M</span>
-            <span className="text-slate-400">T</span>
-            <span className="text-slate-400">W</span>
-            <span className="text-slate-400">T</span>
-            <span className="text-slate-400">F</span>
-            <span className="text-slate-400">S</span>
-
-            {[18, 19, 20, 21].map((d) => (
-              <span key={d} className="py-1 text-slate-600">{d}</span>
-            ))}
-            <span className="py-1 font-bold text-white bg-slate-900 rounded-full flex items-center justify-center">22</span>
-            {[23, 24, 25, 26, 27, 28].map((d) => (
-              <span key={d} className="py-1 text-slate-600">{d}</span>
-            ))}
-          </div>
-
-          <button
-            onClick={() => handleStartDemonstration('simulation-engine')}
-            className="w-full text-center py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-800 transition"
-          >
-            Manage Simulation
-          </button>
-        </div>
-      </div>
-
-      {/* Bottom Row: Assignments Table & Live Messages Feed */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+      {/* Main Content Grid: Host Tasks Table (Left 8 cols) & Telemetry / Security Messages (Right 4 cols) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* Assignments Table (matching Smansys Assignments) */}
         <div className="lg:col-span-8 smansys-card p-6 bg-white space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
@@ -547,51 +415,113 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
           </div>
         </div>
 
-        {/* Live Messages Feed (matching Smansys Messages) */}
-        <div className="lg:col-span-4 smansys-card p-6 bg-white space-y-4 flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-base text-slate-900">Security Messages</h3>
-              <ArrowRight
-                onClick={() => onNavigate('log-preprocessing')}
-                className="w-4 h-4 text-slate-400 cursor-pointer hover:text-slate-700"
-              />
+        {/* Right 4 cols: Telemetry Donut Chart & Live Security Messages */}
+        <div className="lg:col-span-4 space-y-5">
+          {/* Network Host Telemetry Card */}
+          <div className="smansys-card p-5 bg-white flex flex-col justify-between">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h4 className="font-bold text-sm text-slate-800">Network Host Telemetry</h4>
+              <MoreHorizontal className="w-4 h-4 text-slate-400" />
             </div>
 
-            <div className="space-y-3.5 pt-2">
-              {recentEvents.length === 0 ? (
-                <div className="py-8 text-center text-slate-400 text-xs">
-                  Awaiting live system event logs...
+            <div className="py-4 flex items-center justify-center">
+              <div className="relative w-36 h-36 flex items-center justify-center">
+                <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+                  <circle
+                    cx="18"
+                    cy="18"
+                    r="14"
+                    fill="none"
+                    stroke="#ede9fe"
+                    strokeWidth="4.5"
+                  />
+                  <circle
+                    cx="18"
+                    cy="18"
+                    r="14"
+                    fill="none"
+                    stroke="#6366f1"
+                    strokeWidth="4.5"
+                    strokeDasharray={`${totalDiscoveredNodes > 0 ? 75 : 0} 100`}
+                    strokeLinecap="round"
+                  />
+                  <circle
+                    cx="18"
+                    cy="18"
+                    r="14"
+                    fill="none"
+                    stroke="#10b981"
+                    strokeWidth="4.5"
+                    strokeDasharray={`${totalDiscoveredNodes > 0 ? 25 : 0} 100`}
+                    strokeDashoffset="-75"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-xl font-extrabold text-slate-900">
+                    {totalDiscoveredNodes > 0 ? '100%' : '0%'}
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-medium">Live Data</span>
                 </div>
-              ) : (
-                recentEvents.map((ev: any) => (
-                  <div
-                    key={ev.id}
-                    onClick={() => onNavigate('log-preprocessing')}
-                    className="flex items-start gap-3 p-2 rounded-2xl hover:bg-slate-50 transition cursor-pointer"
-                  >
-                    <div className={`w-9 h-9 rounded-2xl ${ev.avatarBg} text-white font-bold text-xs flex items-center justify-center flex-shrink-0 shadow-sm`}>
-                      {ev.avatar}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <h5 className="font-bold text-xs text-slate-900 truncate">{ev.sender}</h5>
-                        <span className="text-[10px] text-slate-400 font-mono">{ev.time}</span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 truncate mt-0.5">{ev.message}</p>
-                    </div>
-                  </div>
-                ))
-              )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-around pt-2 border-t border-slate-100 text-[11px] font-medium text-slate-600">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" /> Host &amp; Gateway
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Neighbors ({netInfo.activeNeighbors?.length || 0})
+              </span>
             </div>
           </div>
 
-          <button
-            onClick={() => onNavigate('log-preprocessing')}
-            className="w-full text-center py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold transition shadow-sm mt-3"
-          >
-            View All Live Logs &rarr;
-          </button>
+          {/* Live Messages Feed (matching Smansys Messages) */}
+          <div className="smansys-card p-6 bg-white space-y-4 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <h3 className="font-bold text-base text-slate-900">Security Messages</h3>
+                <ArrowRight
+                  onClick={() => onNavigate('log-preprocessing')}
+                  className="w-4 h-4 text-slate-400 cursor-pointer hover:text-slate-700"
+                />
+              </div>
+
+              <div className="space-y-3.5 pt-2">
+                {recentEvents.length === 0 ? (
+                  <div className="py-8 text-center text-slate-400 text-xs">
+                    Awaiting live system event logs...
+                  </div>
+                ) : (
+                  recentEvents.map((ev: any) => (
+                    <div
+                      key={ev.id}
+                      onClick={() => onNavigate('log-preprocessing')}
+                      className="flex items-start gap-3 p-2 rounded-2xl hover:bg-slate-50 transition cursor-pointer"
+                    >
+                      <div className={`w-9 h-9 rounded-2xl ${ev.avatarBg} text-white font-bold text-xs flex items-center justify-center flex-shrink-0 shadow-sm`}>
+                        {ev.avatar}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <h5 className="font-bold text-xs text-slate-900 truncate">{ev.sender}</h5>
+                          <span className="text-[10px] text-slate-400 font-mono">{ev.time}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 truncate mt-0.5">{ev.message}</p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <button
+              onClick={() => onNavigate('log-preprocessing')}
+              className="w-full text-center py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold transition shadow-sm mt-3"
+            >
+              View All Live Logs &rarr;
+            </button>
+          </div>
         </div>
       </div>
     </div>

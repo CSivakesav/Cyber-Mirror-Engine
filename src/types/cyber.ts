@@ -114,3 +114,44 @@ export interface LogEntry {
   message: string;
   rawPayload: Record<string, any>;
 }
+
+export type DockerContainerStatus =
+  | 'not_created'
+  | 'building'
+  | 'starting'
+  | 'running'
+  | 'stopped'
+  | 'failed';
+
+export interface DockerPortMapping {
+  hostPort: number;
+  containerPort: number;
+  protocol: string;
+  service: string;
+}
+
+export interface DockerTwinConfig {
+  containerId: string;
+  containerName: string;
+  deviceId: string;
+  deviceIp: string;
+  hostname: string;
+  deviceType: string;
+  vendor: string;
+  zone: string;
+  status: DockerContainerStatus;
+  dockerImage: string;
+  virtualIp: string;
+  mappedPorts: DockerPortMapping[];
+  dockerfileContent: string;
+  composeSnippet: string;
+  entrypointScript: string;
+  createdAt: string;
+  startedAt?: string;
+  cpuUsagePercent: number;
+  memoryUsageMb: number;
+  memoryLimitMb: number;
+  logs: string[];
+  healthStatus: 'healthy' | 'unhealthy' | 'starting';
+  uptimeSeconds: number;
+}

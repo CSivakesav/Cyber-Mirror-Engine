@@ -49,5 +49,9 @@ __pycache__/
 # IDE / Editor artifacts
 .vscode/
 .idea/
+
+# CME Docker Twins generated artifacts
+docker_twins/
+.idea/
 *.swp
 *.swo

@@ -23,18 +23,23 @@ import {
   RotateCcw,
   Sparkles,
   FileSpreadsheet,
+  Container,
 } from 'lucide-react';
 import { ExcelUploadModal } from '../shared/ExcelUploadModal';
 import { clearCustomDevices } from '../../utils/customDeviceStore';
+import { clearDockerTwins } from '../../utils/dockerStore';
 
 export type NavTab =
   | 'dashboard'
   | 'network-discovery'
-  | 'database-mapping'
-  | 'simulation-engine'
+  | 'cyber-mirror-engine'
+  | 'live-probe-analyzer'
   | 'log-preprocessing'
   | 'asset-inventory'
-  | 'settings';
+  | 'settings'
+  | 'database-mapping'
+  | 'docker-twins'
+  | 'simulation-engine';
 
 interface NavItem {
   id: NavTab;
@@ -64,8 +69,8 @@ export const AppShell: React.FC<AppShellProps> = ({
   const navItems: NavItem[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'network-discovery', label: 'Network Discovery', icon: Radar, badge: 'Nmap Live' },
-    { id: 'database-mapping', label: 'Database Mapping', icon: Network, badge: 'Topology' },
-    { id: 'simulation-engine', label: 'Cyber Mirror Engine', icon: Cpu, badge: 'Live Socket' },
+    { id: 'database-mapping', label: 'Visual Network Layout', icon: Network, badge: 'Topology' },
+    { id: 'cyber-mirror-engine', label: 'Cyber Mirror Engine', icon: Container, badge: 'Docker Twins' },
     { id: 'log-preprocessing', label: 'Logs & Events', icon: Terminal, badge: 'Sysmon' },
     { id: 'asset-inventory', label: 'Asset Inventory', icon: Boxes },
     { id: 'settings', label: 'Settings', icon: Settings },
@@ -77,11 +82,12 @@ export const AppShell: React.FC<AppShellProps> = ({
       localStorage.removeItem('medshield_cached_scan_data');
     }
     clearCustomDevices();
+    clearDockerTwins();
     if (onResetAllData) {
       onResetAllData();
     }
     // Call reset API
-    fetch('/api/reset', { method: 'POST' }).catch(() => {});
+    fetch('/api/reset', { method: 'POST' }).catch(() => { });
     setShowToast(true);
     setTimeout(() => setShowToast(false), 3500);
   };
@@ -125,11 +131,10 @@ export const AppShell: React.FC<AppShellProps> = ({
                 <button
                   key={item.id}
                   onClick={() => onTabChange(item.id)}
-                  className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-medium transition-all duration-200 ${
-                    isActive
+                  className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-medium transition-all duration-200 ${isActive
                       ? 'bg-white text-slate-900 shadow-md font-semibold'
                       : 'text-gray-400 hover:text-white hover:bg-white/5'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-3.5">
                     <Icon className={`w-4 h-4 ${isActive ? 'text-black' : 'text-gray-400'}`} />
@@ -137,11 +142,10 @@ export const AppShell: React.FC<AppShellProps> = ({
                   </div>
                   {item.badge && (
                     <span
-                      className={`text-[9.5px] px-2 py-0.5 rounded-full font-mono font-medium ${
-                        isActive
+                      className={`text-[9.5px] px-2 py-0.5 rounded-full font-mono font-medium ${isActive
                           ? 'bg-gray-100 text-gray-700'
                           : 'bg-white/10 text-gray-400'
-                      }`}
+                        }`}
                     >
                       {item.badge}
                     </span>

@@ -299,9 +299,11 @@ export const DatabaseMapping: React.FC = () => {
       {/* Title */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Database Mapping</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">
+            Visual Network Layout &amp; Topology Mapping
+          </h2>
           <p className="text-xs text-slate-500 font-normal">
-            Real Network Topology Rendered from Active Windows Network Interfaces &amp; ARP
+            Interactive Network Topology Rendered from Active Windows Network Interfaces, ARP &amp; Database Schema
           </p>
         </div>
 
